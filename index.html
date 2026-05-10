@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>환율 대시보드</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="fx_data.js" async onload="window._fxLoaded=true;window._render&&window._render()"></script>
+<style>
+  :root {
+    --bg:#0f1117; --card:#1a1d27; --border:#2a2d3a;
+    --text:#e2e8f0; --sub:#b6bdcc; --muted:#8892a4;
+    --accent:#60a5fa; --green:#22c55e; --red:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',-apple-system,sans-serif;font-size:14px;line-height:1.5;padding:16px 20px 32px;}
+  a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
+  header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px;gap:12px;flex-wrap:wrap;}
+  header h1{font-size:20px;font-weight:600;}
+  header .subtitle{font-size:12px;color:var(--muted);margin-top:2px;}
+  #status{font-size:11px;color:var(--muted);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:18px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;}
+  .card h3{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.5px;margin-bottom:6px;text-transform:uppercase;}
+  .card .price{font-size:24px;font-weight:700;margin-bottom:4px;}
+  .card .changes{display:flex;gap:14px;font-size:11px;flex-wrap:wrap;}
+  .change-item{display:flex;flex-direction:column;}
+  .change-item .label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;}
+  .pos{color:var(--green);}.neg{color:var(--red);}
+  .card canvas{width:100% !important;height:60px !important;margin-top:10px;}
+  footer{margin-top:24px;padding-top:14px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);}
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>💱 환율 대시보드</h1>
+      <div class="subtitle">FRED 7 시리즈 · GitHub Actions cron 일 2회</div>
+    </div>
+    <div id="status">데이터 로딩 중…</div>
+  </header>
+  <div id="cards" class="grid"></div>
+  <footer>
+    데이터: <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> ·
+    <a href="https://github.com/gmai1234/fx-dashboard" target="_blank">레포지토리</a>
+  </footer>
+<script>
+function pct(curr, prev){ if(prev==null||prev==0) return null; return ((curr-prev)/prev)*100; }
+function findValueAtOrBefore(arr, daysBack){
+  // arr is desc by date (newest first)
+  if(!arr || !arr.length) return null;
+  const today = new Date(arr[0].date);
+  const target = new Date(today.getTime() - daysBack*86400000);
+  const targetStr = target.toISOString().slice(0,10);
+  for(const o of arr){ if(o.date <= targetStr) return o; }
+  return arr[arr.length-1];
+}
+function fmt(v, decimals){ return v.toLocaleString(undefined,{minimumFractionDigits:decimals,maximumFractionDigits:decimals}); }
+function fmtPct(p){ if(p==null) return '—'; return (p>=0?'+':'') + p.toFixed(2) + '%'; }
+
+window._render = function(){
+  if(!window.FX_DATA) return;
+  const status = document.getElementById('status');
+  const cards = document.getElementById('cards');
+  cards.innerHTML = '';
+  const data = window.FX_DATA;
+  const order = ['DXY','USD_KRW','USD_JPY','USD_CNY','USD_CHF','EUR_USD','GBP_USD'];
+  const decimals = {'DXY':2,'USD_KRW':2,'USD_JPY':2,'USD_CNY':4,'USD_CHF':4,'EUR_USD':4,'GBP_USD':4};
+  for(const key of order){
+    const series = data.series[key] || [];
+    const meta = data.metadata[key] || {label:key};
+    if(!series.length) continue;
+    const latest = series[0];
+    const d1 = findValueAtOrBefore(series, 1);
+    const d7 = findValueAtOrBefore(series, 7);
+    const d30 = findValueAtOrBefore(series, 30);
+    const d365 = findValueAtOrBefore(series, 365);
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = `
+      <h3>${meta.label}</h3>
+      <div class="price">${fmt(latest.value, decimals[key]||2)}</div>
+      <div class="changes">
+        <div class="change-item"><span class="label">1D</span><span class="${pct(latest.value,d1?.value)>=0?'pos':'neg'}">${fmtPct(pct(latest.value,d1?.value))}</span></div>
+        <div class="change-item"><span class="label">1W</span><span class="${pct(latest.value,d7?.value)>=0?'pos':'neg'}">${fmtPct(pct(latest.value,d7?.value))}</span></div>
+        <div class="change-item"><span class="label">1M</span><span class="${pct(latest.value,d30?.value)>=0?'pos':'neg'}">${fmtPct(pct(latest.value,d30?.value))}</span></div>
+        <div class="change-item"><span class="label">1Y</span><span class="${pct(latest.value,d365?.value)>=0?'pos':'neg'}">${fmtPct(pct(latest.value,d365?.value))}</span></div>
+      </div>
+      <canvas id="ch-${key}"></canvas>
+    `;
+    cards.appendChild(c);
+    // sparkline (last 90 days asc)
+    const last90 = series.slice(0, Math.min(90, series.length)).reverse();
+    new Chart(document.getElementById('ch-'+key).getContext('2d'), {
+      type:'line',
+      data:{labels:last90.map(o=>o.date), datasets:[{data:last90.map(o=>o.value),borderColor:'#60a5fa',borderWidth:1.5,fill:true,backgroundColor:'rgba(96,165,250,0.1)',pointRadius:0,tension:0.2}]},
+      options:{plugins:{legend:{display:false}},scales:{x:{display:false},y:{display:false}},elements:{line:{borderJoinStyle:'round'}}}
+    });
+  }
+  const ts = data.collected_at ? new Date(data.collected_at).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}) : '?';
+  const latestDate = data.series.DXY?.[0]?.date || '?';
+  status.textContent = `최신 관측: ${latestDate} · 수집: ${ts}`;
+};
+window._render();
+</script>
+</body>
+</html>
