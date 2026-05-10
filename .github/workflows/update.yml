@@ -25,6 +25,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install yfinance
+        run: pip install yfinance
+
       - name: Fetch FX data and rebuild fx_data.js
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
