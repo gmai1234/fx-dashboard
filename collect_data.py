@@ -40,6 +40,31 @@ def fetch_fred(series_id, max_retries=4):
     raise RuntimeError(f"FRED({series_id}) failed: {last_err}")
 
 
+
+def fetch_yahoo(ticker, max_retries=3):
+    """Yahoo Finance via yfinance (lazy import)."""
+    import yfinance as yf
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(period="3y", interval="1d", auto_adjust=False)
+            if hist.empty:
+                raise RuntimeError(f"empty data for {ticker}")
+            obs = []
+            for idx, row in hist.iterrows():
+                close = row.get("Close")
+                if close is None or (isinstance(close, float) and (close != close)):
+                    continue
+                obs.append({"date": idx.strftime("%Y-%m-%d"), "value": float(close)})
+            obs.sort(key=lambda o: o["date"], reverse=True)
+            return obs[:OBSERVATION_LIMIT]
+        except Exception as e:
+            last_err = e
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"Yahoo({ticker}) failed: {last_err}")
+
+
 def fetch_frankfurter(symbols, days=1095):
     """Frankfurter v1 API → {sym: [{date, value}]} desc."""
     end_date = datetime.utcnow().strftime("%Y-%m-%d")
@@ -88,16 +113,22 @@ def main():
     metadata = {}
     used_source = {}  # 어떤 source 가 실제 사용됐는지
 
-    # DXY: FRED only
-    print("[DXY] Fetching FRED DTWEXBGS...")
+    # DXY: Yahoo (ICE DXY = investing.com 표준) primary, FRED Broad fallback
+    print("[DXY] Fetching Yahoo DX-Y.NYB (ICE DXY)...")
     try:
-        series_data["DXY"] = fetch_fred("DTWEXBGS")
-        used_source["DXY"] = "FRED"
-        print(f"  ✓ DXY: {len(series_data['DXY'])} obs")
+        series_data["DXY"] = fetch_yahoo("DX-Y.NYB")
+        used_source["DXY"] = "Yahoo (ICE)"
+        print(f"  ✓ DXY: {len(series_data['DXY'])} obs (Yahoo ICE DXY)")
     except Exception as e:
-        print(f"  ✗ DXY FRED 실패: {e}", file=sys.stderr)
-        series_data["DXY"] = []
-        used_source["DXY"] = "FAIL"
+        print(f"  ✗ Yahoo DXY 실패: {e}, FRED Broad fallback...", file=sys.stderr)
+        try:
+            series_data["DXY"] = fetch_fred("DTWEXBGS")
+            used_source["DXY"] = "FRED Broad (fallback)"
+            print(f"  ↻ DXY: {len(series_data['DXY'])} obs (FRED Broad fallback)")
+        except Exception as e2:
+            print(f"  ✗ DXY FRED 도 실패: {e2}", file=sys.stderr)
+            series_data["DXY"] = []
+            used_source["DXY"] = "FAIL"
 
     # 6 환율: Frankfurter 우선, 실패 시 FRED
     fr_symbols = ["KRW", "JPY", "CNY", "CHF", "EUR", "GBP"]
